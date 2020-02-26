@@ -176,6 +176,7 @@ pub struct ClientWrapper {
     client: PgClient,
     /// The statement cache
     pub statement_cache: StatementCache,
+    statement_cache_simple: HashMap<String, Statement>
 }
 
 impl ClientWrapper {
@@ -184,6 +185,7 @@ impl ClientWrapper {
         Self {
             client: client,
             statement_cache: StatementCache::new(),
+            statement_cache_simple: HashMap::new()
         }
     }
     /// Creates a new prepared statement using the statement cache if possible.
@@ -206,6 +208,18 @@ impl ClientWrapper {
                 Ok(stmt)
             }
         }
+    }
+    /// Creates a new prepared statement using the statement cache if possible.
+    ///
+    /// See [`tokio_postgres::Client::prepare_typed`](#method.prepare_typed-1)
+    pub async fn prepare_typed_named(&mut self, name: &str, query: &str, types: &[Type]) -> Result<Statement, Error> {
+        if let Some(statement) = self.statement_cache_simple.get(name) {
+            return Ok(statement.clone());
+        }
+        let stmt = self.client.prepare_typed(query, types).await?;
+        self.statement_cache_simple
+            .insert(name.to_owned(), stmt.clone());
+        Ok(stmt)
     }
     /// Begins a new database transaction which supports the statement cache.
     ///
