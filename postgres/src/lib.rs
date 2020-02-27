@@ -63,6 +63,8 @@ use tokio_postgres::{
 pub mod config;
 pub use crate::config::Config;
 
+pub mod readonly;
+
 /// A type alias for using `deadpool::Pool` with `tokio_postgres`
 pub type Pool = deadpool::managed::Pool<ClientWrapper, tokio_postgres::Error>;
 
@@ -72,7 +74,7 @@ pub type PoolError = deadpool::managed::PoolError<tokio_postgres::Error>;
 /// A type alias for using `deadpool::Object` with `tokio_postgres`
 pub type Client = deadpool::managed::Object<ClientWrapper, tokio_postgres::Error>;
 
-type RecycleResult = deadpool::managed::RecycleResult<Error>;
+pub(crate) type RecycleResult = deadpool::managed::RecycleResult<Error>;
 
 /// The manager for creating and recyling postgresql connections
 pub struct Manager<T: MakeTlsConnect<Socket>> {

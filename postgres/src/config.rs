@@ -13,7 +13,7 @@ use tokio_postgres::config::{
 use tokio_postgres::tls::{MakeTlsConnect, TlsConnect};
 use tokio_postgres::Socket;
 
-use crate::Pool;
+use crate::{Pool, readonly::ReadonlyPool};
 
 /// An error which is returned by `Config::create_pool` if something is
 /// wrong with the configuration.
@@ -191,6 +191,19 @@ impl Config {
         let manager = crate::Manager::new(pg_config, tls);
         let pool_config = self.get_pool_config();
         Ok(Pool::from_config(manager, pool_config))
+    }
+    /// Create readonly pool using the current configuration
+    pub fn create_readonly_pool<T>(&self, tls: T) -> Result<ReadonlyPool, ConfigError>
+    where
+        T: MakeTlsConnect<Socket> + Clone + Sync + Send + 'static,
+        T::Stream: Sync + Send,
+        T::TlsConnect: Sync + Send,
+        <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
+    {
+        let pg_config = self.get_pg_config()?;
+        let manager = crate::Manager::new(pg_config, tls);
+        let pool_config = self.get_pool_config();
+        Ok(ReadonlyPool::from_config(manager, pool_config))
     }
     /// Get `tokio_postgres::Config` which can be used to connect to
     /// the database.
