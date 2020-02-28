@@ -109,12 +109,11 @@ where
         Ok(ClientWrapper::new(client))
     }
     async fn recycle(&self, client: &mut ClientWrapper) -> RecycleResult {
-        match client.simple_query("").await {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                info!(target: "deadpool.postgres", "Connection could not be recycled: {}", e);
-                Err(e.into())
-            }
+        if client.is_closed() {
+            info!(target: "deadpool.postgres", "Connection could not be recycled");
+            Err(deadpool::managed::RecycleError::Message("Connection could not be recycled".to_owned()))
+        } else {
+            Ok(())
         }
     }
 }
