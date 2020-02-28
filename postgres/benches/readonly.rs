@@ -21,11 +21,15 @@ macro_rules! bench_pool {
 						pools
 						.iter_mut()
 						.map(|pool| async move {
-							let client = pool.get().await.unwrap();
-							let stmt = client.prepare("SELECT 1 + 2").await.unwrap();
-							let rows = client.query(&stmt, &[]).await.unwrap();
-							let value: i32 = rows[0].get(0);
-							assert_eq!(value, 3);
+							if let Ok(client) = pool.get().await {
+//								println!("got client");
+								let stmt = client.prepare("SELECT 1 + 2").await.unwrap();
+								let rows = client.query(&stmt, &[]).await.unwrap();
+								let value: i32 = rows[0].get(0);
+								assert_eq!(value, 3i32);
+							} else {
+								tokio::time::delay_for(tokio::time::Duration::from_millis(10)).await;
+							}
 						})
 					).await;
 					start.elapsed()
@@ -42,13 +46,14 @@ pub fn pool_benches() {
 		::criterion::Criterion::default().configure_from_args();
 
 	let cfg = Config::from_env("PG").unwrap();
+	dbg!(&cfg);
 	let pool = cfg.create_pool(tokio_postgres::NoTls).unwrap();
 	let readonly_pool = cfg.create_readonly_pool(tokio_postgres::NoTls).unwrap();
 
-	bench_pool!(criterion, pool, "PostgreSQL Pool");
 	bench_pool!(criterion, readonly_pool, "PostgreSQL ReadonlyPool");
 	bench_pool!(criterion, pool, "PostgreSQL Pool");
 	bench_pool!(criterion, readonly_pool, "PostgreSQL ReadonlyPool");
+	bench_pool!(criterion, pool, "PostgreSQL Pool");
 }
 
 criterion_main!(pool_benches);

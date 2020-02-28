@@ -15,17 +15,24 @@ pub type ReadonlyClient = deadpool::managed::Object<ReadonlyClientWrapper, tokio
 
 mod readonly_pool {
 
-    use deadpool::managed::{Pool, Status, PoolConfig, Manager, Object, PoolError};
+    use deadpool::managed::{Status, PoolConfig, Manager, Object, PoolError};
     use std::sync::Arc;
-    use crossbeam_queue::ArrayQueue;
+    use tokio::sync::RwLock;
+    use log::{info};
+    use std::io::stdout;
+    use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use super::ReadonlyClientWrapper;
 
     pub trait IsValid {
         fn is_valid(&self) -> bool;
     } 
 
     struct ReadonlyPoolInner<T: IsValid, E> {
-        pool: Pool<T, E>,
-        objects: ArrayQueue<Arc<Object<T, E>>>,
+        objects: Vec<RwLock<Option<Arc<T>>>>,
+        current: AtomicUsize,
+        max_size: usize,
+        manager: Box<dyn Manager<T, E> + Sync + Send>,
     }
 
     /// ReadonlyPool is a managed pool around shared not mutable references.
@@ -44,7 +51,7 @@ mod readonly_pool {
         }
     }
 
-    impl<T: IsValid, E> ReadonlyPool<T, E> {
+    impl<T: IsValid, E: std::fmt::Debug> ReadonlyPool<T, E> {
         /// Create new connection pool with a given `manager` and `max_size`.
         /// The `manager` is used to create and recycle objects and `max_size`
         /// is the maximum number of objects ever created.
@@ -58,32 +65,37 @@ mod readonly_pool {
             manager: impl Manager<T, E> + Send + Sync + 'static,
             config: PoolConfig,
         ) -> ReadonlyPool<T, E> {
+            let objects: Vec<RwLock<Option<Arc<T>>>> = 
+                (0..config.max_size).map(|_| RwLock::new(None)).collect();
             ReadonlyPool {
                 inner: Arc::new(
                     ReadonlyPoolInner {
-                        objects: ArrayQueue::new(config.max_size),
-                        pool: Pool::from_config(manager, config),
+                        objects,
+                        max_size: config.max_size,
+                        current: AtomicUsize::new(0),
+                        manager: Box::new(manager),
                     }
                 ),
             }
         }
         /// Retrieve object from pool or wait for one to become available.
-        pub async fn get(&self) -> Result<Arc<Object<T, E>>, PoolError<E>> {
-            if self.inner.objects.is_full() {
-                let obj = self.inner.objects.pop().unwrap();
-                if obj.is_valid() {
-                    self.inner.objects.push(obj.clone()).unwrap();
-                    return Ok(obj)
+        pub async fn get(&self) -> Result<Arc<T>, PoolError<E>> {
+            let idx = self.inner.current.fetch_add(1, Ordering::Relaxed) % self.inner.max_size;
+            if let Some(ref client) = *self.inner.objects[idx].read().await {
+                if client.is_valid() {
+                    return Ok(client.clone())
                 }
             }
-            let obj = Arc::new(self.inner.pool.get().await?);
-            self.inner.objects.push(obj.clone()).unwrap();
-            Ok(obj)
-        }
-        /// Retrieve status of the pool
-        #[inline]
-        pub fn status(&self) -> Status {
-            self.inner.pool.status()
+            // client either lost connection or is not initialized
+            let mut obj = self.inner.objects[idx].write().await;
+            if let Some(ref client) = *obj {
+                if client.is_valid() {
+                    // client appeared to be initialized 
+                    return Ok(client.clone())
+                }
+            }
+            *obj = Some(Arc::new(self.inner.manager.create().await?));
+            return Ok(obj.clone().unwrap());
         }
     }
 }
